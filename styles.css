@@ -130,6 +130,11 @@ fieldset {
   gap: 0.8rem;
 }
 
+.view {
+  display: grid;
+  gap: 0.95rem;
+}
+
 .section-head {
   display: flex;
   align-items: center;
@@ -143,6 +148,15 @@ fieldset {
   gap: 0.5rem;
 }
 
+.wide-inline-form {
+  width: 100%;
+}
+
+.wide-inline-form input,
+.wide-inline-form select {
+  flex: 1;
+}
+
 .inline-form input {
   width: 180px;
 }
@@ -150,6 +164,50 @@ fieldset {
 .expense-form {
   display: grid;
   gap: 0.72rem;
+}
+
+.member-pickers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.picker-col {
+  border: 1px solid #dfcfb8;
+  border-radius: 12px;
+  padding: 0.65rem;
+  background: #fff8ee;
+}
+
+.picker-col h3 {
+  margin: 0 0 0.55rem;
+  font-size: 0.95rem;
+}
+
+.picker-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.picker-btn {
+  width: 100%;
+  border: 1px solid #ddc7a9;
+  background: #fff;
+  border-radius: 10px;
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  color: var(--text);
+}
+
+.picker-btn.active {
+  border-color: #2d6a4f;
+  background: #ebf7f1;
+  box-shadow: inset 0 0 0 1px #2d6a4f;
+}
+
+.picker-empty {
+  color: var(--muted);
+  font-size: 0.9rem;
 }
 
 .checkbox-grid {
@@ -298,6 +356,10 @@ fieldset {
 
 @media (max-width: 740px) {
   .grid-2 {
+    grid-template-columns: 1fr;
+  }
+
+  .member-pickers {
     grid-template-columns: 1fr;
   }
 

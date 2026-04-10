@@ -4,7 +4,6 @@ import {
   collection,
   deleteDoc,
   doc,
-  getDoc,
   onSnapshot,
   orderBy,
   query,
@@ -19,29 +18,47 @@ const CURRENCY = "EUR";
 
 const els = {
   status: document.getElementById("status"),
-  groupNameInput: document.getElementById("group-name-input"),
   myNameInput: document.getElementById("my-name-input"),
-  copyShareLinkBtn: document.getElementById("copy-share-link-btn"),
+
+  menuView: document.getElementById("menu-view"),
+  groupView: document.getElementById("group-view"),
+
+  groupSelect: document.getElementById("group-select"),
+  enterGroupBtn: document.getElementById("enter-group-btn"),
+  newGroupNameInput: document.getElementById("new-group-name-input"),
+  addGroupBtn: document.getElementById("add-group-btn"),
+
   newMemberInput: document.getElementById("new-member-input"),
   addMemberBtn: document.getElementById("add-member-btn"),
   memberList: document.getElementById("member-list"),
+
+  activeGroupTitle: document.getElementById("active-group-title"),
+  backToMenuBtn: document.getElementById("back-to-menu-btn"),
+  copyShareLinkBtn: document.getElementById("copy-share-link-btn"),
+
   expenseForm: document.getElementById("expense-form"),
   expenseDescription: document.getElementById("expense-description"),
   expenseAmount: document.getElementById("expense-amount"),
-  expensePayer: document.getElementById("expense-payer"),
-  participantCheckboxes: document.getElementById("participant-checkboxes"),
+  payersPicker: document.getElementById("payers-picker"),
+  participantsPicker: document.getElementById("participants-picker"),
   saveExpenseBtn: document.getElementById("save-expense-btn"),
   cancelEditBtn: document.getElementById("cancel-edit-btn"),
+
   expenseList: document.getElementById("expense-list"),
   balancesList: document.getElementById("balances-list"),
   settlementsList: document.getElementById("settlements-list")
 };
 
 const state = {
-  groupId: getOrCreateGroupId(),
+  pendingGroupIdFromHash: getHashGroupId(),
+  selectedGroupId: null,
+  groups: [],
   members: [],
   expenses: [],
   editingExpenseId: null,
+  selectedPayerIds: new Set(),
+  selectedParticipantIds: new Set(),
+  unsubGroups: null,
   unsubMembers: null,
   unsubExpenses: null
 };
@@ -58,10 +75,8 @@ init().catch((err) => {
 async function init() {
   validateFirebaseConfig();
   wireEvents();
-  await ensureGroupExists();
-  await loadGroupMeta();
-  subscribeMembers();
-  subscribeExpenses();
+  els.myNameInput.value = localStorage.getItem("split-my-name") ?? "";
+  subscribeGroups();
   setStatus("Aplikacija je spremna.");
 }
 
@@ -72,7 +87,30 @@ function validateFirebaseConfig() {
 }
 
 function wireEvents() {
-  els.copyShareLinkBtn.addEventListener("click", copyShareLink);
+  els.myNameInput.addEventListener("input", () => {
+    localStorage.setItem("split-my-name", els.myNameInput.value.trim());
+  });
+
+  els.groupSelect.addEventListener("change", () => {
+    setSelectedGroup(els.groupSelect.value, { enterGroupView: false });
+  });
+
+  els.enterGroupBtn.addEventListener("click", () => {
+    if (!state.selectedGroupId) {
+      setStatus("Prvo odaberi grupu.", true);
+      return;
+    }
+    openGroupView();
+  });
+
+  els.addGroupBtn.addEventListener("click", addGroupFromInput);
+  els.newGroupNameInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addGroupFromInput();
+    }
+  });
+
   els.addMemberBtn.addEventListener("click", addMemberFromInput);
   els.newMemberInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
@@ -81,29 +119,175 @@ function wireEvents() {
     }
   });
 
-  let saveTimer;
-  els.groupNameInput.addEventListener("input", async () => {
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(updateGroupName, 300);
-  });
-
-  els.myNameInput.addEventListener("input", () => {
-    localStorage.setItem("split-my-name", els.myNameInput.value.trim());
-  });
+  els.backToMenuBtn.addEventListener("click", openMenuView);
+  els.copyShareLinkBtn.addEventListener("click", copyShareLink);
 
   els.expenseForm.addEventListener("submit", upsertExpense);
   els.cancelEditBtn.addEventListener("click", resetExpenseForm);
+
+  els.payersPicker.addEventListener("click", (e) => togglePickerSelection(e, "payer"));
+  els.participantsPicker.addEventListener("click", (e) => togglePickerSelection(e, "participant"));
 }
 
-function getOrCreateGroupId() {
-  const hash = window.location.hash.replace("#", "").trim();
-  if (hash) {
-    return hash;
+function groupsCollectionRef() {
+  return collection(db, "groups");
+}
+
+function groupDocRef(groupId = state.selectedGroupId) {
+  return doc(db, "groups", groupId);
+}
+
+function membersCollectionRef(groupId = state.selectedGroupId) {
+  return collection(db, "groups", groupId, "members");
+}
+
+function expensesCollectionRef(groupId = state.selectedGroupId) {
+  return collection(db, "groups", groupId, "expenses");
+}
+
+function subscribeGroups() {
+  state.unsubGroups?.();
+
+  const q = query(groupsCollectionRef(), orderBy("createdAt", "asc"));
+  state.unsubGroups = onSnapshot(
+    q,
+    async (snapshot) => {
+      state.groups = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      if (state.groups.length === 0) {
+        const initialId = state.pendingGroupIdFromHash || null;
+        await createGroup(initialId, "Prva grupa");
+        return;
+      }
+
+      resolveSelectedGroupAfterGroupsUpdate();
+      renderGroupSelect();
+      renderActiveGroupTitle();
+    },
+    (err) => setStatus(`Greska pri dohvatu grupa: ${err.message}`, true)
+  );
+}
+
+function resolveSelectedGroupAfterGroupsUpdate() {
+  const validIds = new Set(state.groups.map((g) => g.id));
+
+  if (state.pendingGroupIdFromHash) {
+    if (validIds.has(state.pendingGroupIdFromHash)) {
+      setSelectedGroup(state.pendingGroupIdFromHash, { enterGroupView: true });
+      state.pendingGroupIdFromHash = null;
+      return;
+    }
+
+    createGroup(state.pendingGroupIdFromHash, "Podijeljena grupa").catch((err) => {
+      setStatus(`Kreiranje dijeljene grupe nije uspjelo: ${err.message}`, true);
+    });
+    state.pendingGroupIdFromHash = null;
+    return;
   }
 
-  const generated = crypto.randomUUID().replace(/-/g, "").slice(0, 14);
-  window.location.hash = generated;
-  return generated;
+  if (state.selectedGroupId && validIds.has(state.selectedGroupId)) {
+    return;
+  }
+
+  setSelectedGroup(state.groups[0].id, { enterGroupView: false });
+}
+
+function renderGroupSelect() {
+  const current = state.selectedGroupId;
+  els.groupSelect.innerHTML = "";
+
+  state.groups.forEach((group) => {
+    const option = document.createElement("option");
+    option.value = group.id;
+    option.textContent = group.name || "Bez naziva";
+    els.groupSelect.appendChild(option);
+  });
+
+  if (current && state.groups.some((g) => g.id === current)) {
+    els.groupSelect.value = current;
+  }
+}
+
+function renderActiveGroupTitle() {
+  const group = state.groups.find((g) => g.id === state.selectedGroupId);
+  els.activeGroupTitle.textContent = group?.name ? `Grupa: ${group.name}` : "Grupa";
+}
+
+async function createGroup(groupId = null, name = "Nova grupa") {
+  const groupName = name.trim() || "Nova grupa";
+
+  if (groupId) {
+    await setDoc(groupDocRef(groupId), {
+      name: groupName,
+      currency: CURRENCY,
+      createdAt: serverTimestamp()
+    });
+    setSelectedGroup(groupId, { enterGroupView: false });
+    return;
+  }
+
+  const docRef = await addDoc(groupsCollectionRef(), {
+    name: groupName,
+    currency: CURRENCY,
+    createdAt: serverTimestamp()
+  });
+
+  setSelectedGroup(docRef.id, { enterGroupView: false });
+}
+
+async function addGroupFromInput() {
+  const name = els.newGroupNameInput.value.trim();
+  if (!name) {
+    setStatus("Upisi naziv nove grupe.", true);
+    return;
+  }
+
+  try {
+    await createGroup(null, name);
+    els.newGroupNameInput.value = "";
+    setStatus(`Grupa ${name} je kreirana.`);
+  } catch (err) {
+    setStatus(`Kreiranje grupe nije uspjelo: ${err.message}`, true);
+  }
+}
+
+function setSelectedGroup(groupId, { enterGroupView = false } = {}) {
+  if (!groupId || groupId === state.selectedGroupId) {
+    if (enterGroupView && groupId) {
+      openGroupView();
+    }
+    return;
+  }
+
+  state.selectedGroupId = groupId;
+  state.editingExpenseId = null;
+  state.selectedPayerIds = new Set();
+  state.selectedParticipantIds = new Set();
+  els.groupSelect.value = groupId;
+
+  window.location.hash = groupId;
+  subscribeMembers();
+  subscribeExpenses();
+  renderActiveGroupTitle();
+
+  if (enterGroupView) {
+    openGroupView();
+  }
+}
+
+function openGroupView() {
+  els.menuView.classList.add("hidden");
+  els.groupView.classList.remove("hidden");
+  renderActiveGroupTitle();
+}
+
+function openMenuView() {
+  els.groupView.classList.add("hidden");
+  els.menuView.classList.remove("hidden");
+}
+
+function getHashGroupId() {
+  return window.location.hash.replace("#", "").trim() || null;
 }
 
 function setStatus(message, isError = false) {
@@ -111,58 +295,59 @@ function setStatus(message, isError = false) {
   els.status.style.color = isError ? "#a4161a" : "#2d6a4f";
 }
 
-function groupDocRef() {
-  return doc(db, "groups", state.groupId);
-}
+function subscribeMembers() {
+  state.unsubMembers?.();
+  state.members = [];
 
-function membersCollectionRef() {
-  return collection(db, "groups", state.groupId, "members");
-}
-
-function expensesCollectionRef() {
-  return collection(db, "groups", state.groupId, "expenses");
-}
-
-async function ensureGroupExists() {
-  const ref = groupDocRef();
-  const snap = await getDoc(ref);
-  if (!snap.exists()) {
-    await setDoc(ref, {
-      name: "Nova grupa",
-      currency: CURRENCY,
-      createdAt: serverTimestamp()
-    });
+  if (!state.selectedGroupId) {
+    renderMembers();
+    renderMemberPickers();
+    return;
   }
+
+  const q = query(membersCollectionRef(), orderBy("createdAt", "asc"));
+
+  state.unsubMembers = onSnapshot(
+    q,
+    (snapshot) => {
+      state.members = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderMembers();
+      renderMemberPickers();
+      renderBalancesAndSettlements();
+    },
+    (err) => setStatus(`Greska pri dohvatu clanova: ${err.message}`, true)
+  );
 }
 
-async function loadGroupMeta() {
-  const snap = await getDoc(groupDocRef());
-  const data = snap.data() ?? {};
-  els.groupNameInput.value = data.name ?? "Nova grupa";
-  els.myNameInput.value = localStorage.getItem("split-my-name") ?? "";
-}
+function subscribeExpenses() {
+  state.unsubExpenses?.();
+  state.expenses = [];
 
-async function updateGroupName() {
-  const newName = els.groupNameInput.value.trim() || "Nova grupa";
-  try {
-    await updateDoc(groupDocRef(), { name: newName });
-    setStatus("Naziv grupe je spremljen.");
-  } catch (err) {
-    setStatus(`Spremanje naziva nije uspjelo: ${err.message}`, true);
+  if (!state.selectedGroupId) {
+    renderExpenses();
+    renderBalancesAndSettlements();
+    return;
   }
-}
 
-async function copyShareLink() {
-  const shareLink = `${window.location.origin}${window.location.pathname}#${state.groupId}`;
-  try {
-    await navigator.clipboard.writeText(shareLink);
-    setStatus("Share link je kopiran.");
-  } catch {
-    setStatus("Clipboard nije dostupan. Link je u URL-u preglednika.");
-  }
+  const q = query(expensesCollectionRef(), orderBy("createdAt", "desc"));
+
+  state.unsubExpenses = onSnapshot(
+    q,
+    (snapshot) => {
+      state.expenses = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderExpenses();
+      renderBalancesAndSettlements();
+    },
+    (err) => setStatus(`Greska pri dohvatu troskova: ${err.message}`, true)
+  );
 }
 
 async function addMemberFromInput() {
+  if (!state.selectedGroupId) {
+    setStatus("Prvo kreiraj i odaberi grupu.", true);
+    return;
+  }
+
   const name = els.newMemberInput.value.trim();
   if (!name) {
     setStatus("Unesi ime clana.", true);
@@ -187,40 +372,15 @@ async function addMemberFromInput() {
   }
 }
 
-function subscribeMembers() {
-  state.unsubMembers?.();
-  const q = query(membersCollectionRef(), orderBy("createdAt", "asc"));
-
-  state.unsubMembers = onSnapshot(
-    q,
-    (snapshot) => {
-      state.members = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-      renderMembers();
-      renderPayerOptions();
-      renderParticipantCheckboxes();
-      renderBalancesAndSettlements();
-    },
-    (err) => setStatus(`Greska pri dohvatu clanova: ${err.message}`, true)
-  );
-}
-
-function subscribeExpenses() {
-  state.unsubExpenses?.();
-  const q = query(expensesCollectionRef(), orderBy("createdAt", "desc"));
-
-  state.unsubExpenses = onSnapshot(
-    q,
-    (snapshot) => {
-      state.expenses = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-      renderExpenses();
-      renderBalancesAndSettlements();
-    },
-    (err) => setStatus(`Greska pri dohvatu troskova: ${err.message}`, true)
-  );
-}
-
 function renderMembers() {
   els.memberList.innerHTML = "";
+
+  if (!state.selectedGroupId) {
+    const li = document.createElement("li");
+    li.textContent = "Prvo odaberi grupu.";
+    els.memberList.appendChild(li);
+    return;
+  }
 
   if (state.members.length === 0) {
     const li = document.createElement("li");
@@ -246,78 +406,115 @@ function renderMembers() {
   });
 }
 
-function renderPayerOptions() {
-  const current = els.expensePayer.value;
-  els.expensePayer.innerHTML = "";
+function renderMemberPickers() {
+  const memberIds = new Set(state.members.map((m) => m.id));
+
+  state.selectedPayerIds = new Set([...state.selectedPayerIds].filter((id) => memberIds.has(id)));
+  state.selectedParticipantIds = new Set(
+    [...state.selectedParticipantIds].filter((id) => memberIds.has(id))
+  );
+
+  if (state.selectedPayerIds.size === 0 && state.members.length > 0) {
+    state.selectedPayerIds.add(state.members[0].id);
+  }
+
+  if (state.selectedParticipantIds.size === 0 && state.members.length > 0) {
+    state.members.forEach((m) => state.selectedParticipantIds.add(m.id));
+  }
+
+  renderPicker(els.payersPicker, state.selectedPayerIds, "Nema clanova za odabir.");
+  renderPicker(els.participantsPicker, state.selectedParticipantIds, "Nema clanova za odabir.");
+}
+
+function renderPicker(container, activeSet, emptyText) {
+  container.innerHTML = "";
+
+  if (state.members.length === 0) {
+    const p = document.createElement("p");
+    p.className = "picker-empty";
+    p.textContent = emptyText;
+    container.appendChild(p);
+    return;
+  }
 
   state.members.forEach((member) => {
-    const option = document.createElement("option");
-    option.value = member.id;
-    option.textContent = member.name;
-    els.expensePayer.appendChild(option);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "picker-btn";
+    if (activeSet.has(member.id)) {
+      btn.classList.add("active");
+    }
+    btn.dataset.memberId = member.id;
+    btn.textContent = member.name;
+    container.appendChild(btn);
   });
+}
 
-  if (!state.members.some((m) => m.id === current) && state.members.length > 0) {
-    els.expensePayer.value = state.members[0].id;
+function togglePickerSelection(event, role) {
+  const button = event.target.closest("button[data-member-id]");
+  if (!button) {
+    return;
+  }
+
+  const memberId = button.dataset.memberId;
+  const targetSet = role === "payer" ? state.selectedPayerIds : state.selectedParticipantIds;
+
+  if (targetSet.has(memberId)) {
+    targetSet.delete(memberId);
+    button.classList.remove("active");
   } else {
-    els.expensePayer.value = current;
+    targetSet.add(memberId);
+    button.classList.add("active");
   }
 }
 
-function renderParticipantCheckboxes() {
-  const selected = new Set(getSelectedParticipantIds());
-  els.participantCheckboxes.innerHTML = "";
+async function copyShareLink() {
+  if (!state.selectedGroupId) {
+    setStatus("Nema aktivne grupe za dijeljenje.", true);
+    return;
+  }
 
-  state.members.forEach((member) => {
-    const wrapper = document.createElement("label");
-    wrapper.className = "checkbox-item";
-
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.value = member.id;
-    checkbox.checked = selected.size === 0 ? true : selected.has(member.id);
-
-    const span = document.createElement("span");
-    span.textContent = member.name;
-
-    wrapper.append(checkbox, span);
-    els.participantCheckboxes.appendChild(wrapper);
-  });
-}
-
-function getSelectedParticipantIds() {
-  return Array.from(els.participantCheckboxes.querySelectorAll("input[type='checkbox']:checked")).map(
-    (cb) => cb.value
-  );
+  const shareLink = `${window.location.origin}${window.location.pathname}#${state.selectedGroupId}`;
+  try {
+    await navigator.clipboard.writeText(shareLink);
+    setStatus("Share link je kopiran.");
+  } catch {
+    setStatus("Clipboard nije dostupan. Link je u URL-u preglednika.");
+  }
 }
 
 async function upsertExpense(e) {
   e.preventDefault();
 
+  if (!state.selectedGroupId) {
+    setStatus("Prvo odaberi grupu.", true);
+    return;
+  }
+
   const description = els.expenseDescription.value.trim();
   const amount = Number(els.expenseAmount.value);
-  const payerMemberId = els.expensePayer.value;
-  const participantMemberIds = getSelectedParticipantIds();
+  const payerMemberIds = [...state.selectedPayerIds];
+  const participantMemberIds = [...state.selectedParticipantIds];
 
   if (!description || !Number.isFinite(amount) || amount <= 0) {
     setStatus("Opis i pozitivan iznos su obavezni.", true);
     return;
   }
 
-  if (!payerMemberId) {
-    setStatus("Odaberi clana koji je platio.", true);
+  if (payerMemberIds.length === 0) {
+    setStatus("Odaberi barem jednog platioca lijevo.", true);
     return;
   }
 
   if (participantMemberIds.length === 0) {
-    setStatus("Odaberi barem jednog sudionika.", true);
+    setStatus("Odaberi barem jednog sudionika desno.", true);
     return;
   }
 
   const payload = {
     description,
     amount: Number(amount.toFixed(2)),
-    payerMemberId,
+    payerMemberIds,
     participantMemberIds,
     updatedAt: serverTimestamp(),
     createdByName: els.myNameInput.value.trim() || "Anonimno"
@@ -325,7 +522,7 @@ async function upsertExpense(e) {
 
   try {
     if (state.editingExpenseId) {
-      await updateDoc(doc(db, "groups", state.groupId, "expenses", state.editingExpenseId), payload);
+      await updateDoc(doc(db, "groups", state.selectedGroupId, "expenses", state.editingExpenseId), payload);
       setStatus("Trosak je azuriran.");
     } else {
       await addDoc(expensesCollectionRef(), { ...payload, createdAt: serverTimestamp() });
@@ -343,7 +540,10 @@ function resetExpenseForm() {
   els.expenseForm.reset();
   els.saveExpenseBtn.textContent = "Spremi trosak";
   els.cancelEditBtn.classList.add("hidden");
-  renderParticipantCheckboxes();
+
+  state.selectedPayerIds = new Set();
+  state.selectedParticipantIds = new Set();
+  renderMemberPickers();
 }
 
 function renderExpenses() {
@@ -357,8 +557,8 @@ function renderExpenses() {
   }
 
   state.expenses.forEach((expense) => {
-    const payerName = memberNameById(expense.payerMemberId);
-    const participants = (expense.participantMemberIds || []).map(memberNameById).join(", ");
+    const payerNames = getMemberNames(expense.payerMemberIds || []);
+    const participantNames = getMemberNames(expense.participantMemberIds || []);
 
     const li = document.createElement("li");
     li.className = "expense-item";
@@ -367,7 +567,8 @@ function renderExpenses() {
         <strong>${escapeHtml(expense.description)}</strong>
         <strong>${formatMoney(expense.amount)}</strong>
       </div>
-      <div class="expense-sub">Platio: ${escapeHtml(payerName)} | Dijeli se na: ${escapeHtml(participants)}</div>
+      <div class="expense-sub">Platili: ${escapeHtml(payerNames.join(", "))}</div>
+      <div class="expense-sub">Podjela na: ${escapeHtml(participantNames.join(", "))}</div>
       <div class="expense-sub">Unio: ${escapeHtml(expense.createdByName || "Anonimno")}</div>
     `;
 
@@ -401,21 +602,17 @@ function startEditExpense(expenseId) {
   state.editingExpenseId = expenseId;
   els.expenseDescription.value = expense.description;
   els.expenseAmount.value = expense.amount;
-  els.expensePayer.value = expense.payerMemberId;
-  renderParticipantCheckboxes();
-
-  const selected = new Set(expense.participantMemberIds || []);
-  els.participantCheckboxes.querySelectorAll("input[type='checkbox']").forEach((cb) => {
-    cb.checked = selected.has(cb.value);
-  });
-
   els.saveExpenseBtn.textContent = "Spremi izmjenu";
   els.cancelEditBtn.classList.remove("hidden");
+
+  state.selectedPayerIds = new Set(expense.payerMemberIds || []);
+  state.selectedParticipantIds = new Set(expense.participantMemberIds || []);
+  renderMemberPickers();
 }
 
 async function deleteExpense(expenseId) {
   try {
-    await deleteDoc(doc(db, "groups", state.groupId, "expenses", expenseId));
+    await deleteDoc(doc(db, "groups", state.selectedGroupId, "expenses", expenseId));
     if (state.editingExpenseId === expenseId) {
       resetExpenseForm();
     }
@@ -426,10 +623,11 @@ async function deleteExpense(expenseId) {
 }
 
 async function deleteMember(memberId, memberName) {
-  const isUsed = state.expenses.some(
-    (expense) =>
-      expense.payerMemberId === memberId || (expense.participantMemberIds || []).includes(memberId)
-  );
+  const isUsed = state.expenses.some((expense) => {
+    const payers = expense.payerMemberIds || [];
+    const participants = expense.participantMemberIds || [];
+    return payers.includes(memberId) || participants.includes(memberId);
+  });
 
   if (isUsed) {
     setStatus("Ne mozes obrisati clana koji postoji u troskovima.", true);
@@ -437,7 +635,7 @@ async function deleteMember(memberId, memberName) {
   }
 
   try {
-    await deleteDoc(doc(db, "groups", state.groupId, "members", memberId));
+    await deleteDoc(doc(db, "groups", state.selectedGroupId, "members", memberId));
     setStatus(`Clan ${memberName} je obrisan.`);
   } catch (err) {
     setStatus(`Brisanje clana nije uspjelo: ${err.message}`, true);
@@ -458,21 +656,23 @@ function renderBalancesAndSettlements() {
   const balanceByMember = new Map(state.members.map((m) => [m.id, 0]));
 
   state.expenses.forEach((expense) => {
-    const participantIds = expense.participantMemberIds || [];
-    if (participantIds.length === 0) {
+    const participants = expense.participantMemberIds || [];
+    const payers = expense.payerMemberIds || [];
+
+    if (participants.length === 0 || payers.length === 0) {
       return;
     }
 
-    const share = expense.amount / participantIds.length;
+    const participantShare = expense.amount / participants.length;
+    const payerShare = expense.amount / payers.length;
 
-    participantIds.forEach((memberId) => {
-      balanceByMember.set(memberId, (balanceByMember.get(memberId) || 0) - share);
+    participants.forEach((memberId) => {
+      balanceByMember.set(memberId, (balanceByMember.get(memberId) || 0) - participantShare);
     });
 
-    balanceByMember.set(
-      expense.payerMemberId,
-      (balanceByMember.get(expense.payerMemberId) || 0) + expense.amount
-    );
+    payers.forEach((memberId) => {
+      balanceByMember.set(memberId, (balanceByMember.get(memberId) || 0) + payerShare);
+    });
   });
 
   state.members.forEach((member) => {
@@ -547,8 +747,8 @@ function calculateSettlements(balanceByMember) {
   return settlements;
 }
 
-function memberNameById(id) {
-  return state.members.find((m) => m.id === id)?.name ?? "Nepoznat clan";
+function getMemberNames(ids) {
+  return ids.map((id) => state.members.find((m) => m.id === id)?.name ?? "Nepoznat clan");
 }
 
 function formatMoney(value) {

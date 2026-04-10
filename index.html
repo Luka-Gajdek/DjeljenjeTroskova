@@ -22,70 +22,96 @@
           <p class="eyebrow">Split app</p>
           <h1>Dijeljenje troskova</h1>
         </div>
-        <button id="copy-share-link-btn" class="btn btn-secondary">Kopiraj share link</button>
+        <input id="my-name-input" type="text" placeholder="Tvoje ime (opcionalno)" maxlength="30" />
       </header>
 
-      <section class="card grid-2">
-        <div>
-          <label for="group-name-input">Naziv grupe</label>
-          <input id="group-name-input" type="text" placeholder="Npr. Vikend putovanje" maxlength="50" />
-        </div>
-        <div>
-          <label for="my-name-input">Tvoje ime</label>
-          <input id="my-name-input" type="text" placeholder="Npr. Luka" maxlength="30" />
-        </div>
+      <section id="menu-view" class="view">
+        <section class="card">
+          <div class="section-head">
+            <h2>Odabir grupe</h2>
+          </div>
+          <div class="inline-form wide-inline-form">
+            <select id="group-select"></select>
+            <button id="enter-group-btn" class="btn">Udji u grupu</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="section-head">
+            <h2>Dodavanje novih ljudi</h2>
+            <div class="inline-form">
+              <input id="new-member-input" type="text" placeholder="Ime clana" maxlength="30" />
+              <button id="add-member-btn" class="btn">Dodaj</button>
+            </div>
+          </div>
+          <ul id="member-list" class="chip-list"></ul>
+        </section>
+
+        <section class="card">
+          <div class="section-head">
+            <h2>Dodavanje novih grupa</h2>
+          </div>
+          <div class="inline-form wide-inline-form">
+            <input id="new-group-name-input" type="text" placeholder="Npr. More 2026" maxlength="50" />
+            <button id="add-group-btn" class="btn">Kreiraj grupu</button>
+          </div>
+        </section>
       </section>
 
-      <section class="card">
-        <div class="section-head">
-          <h2>Clanovi</h2>
-          <div class="inline-form">
-            <input id="new-member-input" type="text" placeholder="Dodaj clana" maxlength="30" />
-            <button id="add-member-btn" class="btn">Dodaj</button>
+      <section id="group-view" class="view hidden">
+        <section class="card">
+          <div class="section-head">
+            <h2 id="active-group-title">Grupa</h2>
+            <div class="inline-form">
+              <button id="copy-share-link-btn" class="btn btn-secondary">Kopiraj share link</button>
+              <button id="back-to-menu-btn" class="btn btn-ghost">Nazad</button>
+            </div>
           </div>
-        </div>
-        <ul id="member-list" class="chip-list"></ul>
-      </section>
+        </section>
 
-      <section class="card">
-        <div class="section-head">
-          <h2>Novi trosak</h2>
-        </div>
-        <form id="expense-form" class="expense-form">
-          <div>
-            <label for="expense-description">Opis</label>
-            <input id="expense-description" type="text" required maxlength="100" placeholder="Npr. Vecera" />
+        <section class="card">
+          <div class="section-head">
+            <h2>Novi trosak</h2>
           </div>
-          <div>
-            <label for="expense-amount">Iznos (EUR)</label>
-            <input id="expense-amount" type="number" step="0.01" min="0.01" required placeholder="0.00" />
-          </div>
-          <div>
-            <label for="expense-payer">Platio</label>
-            <select id="expense-payer" required></select>
-          </div>
-          <fieldset>
-            <legend>Podijeli na</legend>
-            <div id="participant-checkboxes" class="checkbox-grid"></div>
-          </fieldset>
-          <button id="save-expense-btn" type="submit" class="btn">Spremi trosak</button>
-          <button id="cancel-edit-btn" type="button" class="btn btn-ghost hidden">Odustani od izmjene</button>
-        </form>
-      </section>
+          <form id="expense-form" class="expense-form">
+            <div>
+              <label for="expense-description">Opis</label>
+              <input id="expense-description" type="text" required maxlength="100" placeholder="Npr. Vecera" />
+            </div>
+            <div>
+              <label for="expense-amount">Iznos (EUR)</label>
+              <input id="expense-amount" type="number" step="0.01" min="0.01" required placeholder="0.00" />
+            </div>
+            <div class="member-pickers">
+              <div class="picker-col">
+                <h3>Platioci (lijevo)</h3>
+                <div id="payers-picker" class="picker-list"></div>
+              </div>
+              <div class="picker-col">
+                <h3>Podjela troska (desno)</h3>
+                <div id="participants-picker" class="picker-list"></div>
+              </div>
+            </div>
 
-      <section class="card">
-        <div class="section-head">
-          <h2>Troskovi</h2>
-        </div>
-        <ul id="expense-list" class="expense-list"></ul>
-      </section>
+            <button id="save-expense-btn" type="submit" class="btn">Spremi trosak</button>
+            <button id="cancel-edit-btn" type="button" class="btn btn-ghost hidden">Odustani od izmjene</button>
+          </form>
+        </section>
 
-      <section class="card">
-        <div class="section-head">
-          <h2>Salda i poravnanja</h2>
-        </div>
-        <ul id="balances-list" class="balance-list"></ul>
-        <ul id="settlements-list" class="settlement-list"></ul>
+        <section class="card">
+          <div class="section-head">
+            <h2>Troskovi</h2>
+          </div>
+          <ul id="expense-list" class="expense-list"></ul>
+        </section>
+
+        <section class="card">
+          <div class="section-head">
+            <h2>Salda i poravnanja</h2>
+          </div>
+          <ul id="balances-list" class="balance-list"></ul>
+          <ul id="settlements-list" class="settlement-list"></ul>
+        </section>
       </section>
 
       <p id="status" class="status"></p>
